@@ -145,4 +145,5 @@ And the API request body should look like this. Note that the value for each var
   }
 }
 ```
-
+### Clean-up
+To delete the solution, navigate to the AWS CloudFormation console and delete the stack deployed.
