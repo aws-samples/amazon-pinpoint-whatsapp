@@ -1,0 +1,338 @@
+# Amazon Pinpoint - WhatsApp integration
+#
+# **DO NOT DELETE**
+#
+# author: pavlosik@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: Amazon Pinpoint - WhatsApp two way messaging integration
+
+Parameters:
+  WhatsAppAccessToken:
+    Type: String
+    NoEcho: true
+    Default: 'Bearer EAA...'
+  PhoneNumberId:
+    Type: String
+    Default: 112593215076318
+  VerifyToken:
+    Type: String
+    Default: 123456
+  ApiGatewayName:
+    Type: String
+    Default: PinpointWhatsApp
+  PinpointProjectId:
+    Type: String
+
+Resources:
+  apiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Description: "WhatsApp webhook for inbound messages"
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Name: !Ref ApiGatewayName
+
+  apiGatewayRootMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: ANY
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${lambdaArn}/invocations
+          - lambdaArn: !GetAtt WhatsAppWebHookLambda.Arn
+      ResourceId: !GetAtt apiGateway.RootResourceId
+      RestApiId: !Ref apiGateway
+
+  apiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - apiGatewayRootMethod
+    Properties:
+      RestApiId: !Ref apiGateway
+
+  apiGatewayStage:   
+    Type: AWS::ApiGateway::Stage
+    Properties: 
+      StageName: "call"
+      AccessLogSetting:
+        DestinationArn: !GetAtt apiGatewayLogGroup.Arn
+        Format: $context.extendedRequestId $context.identity.sourceIp $context.identity.caller $context.identity.user [$context.requestTime] "$context.httpMethod $context.resourcePath $context.protocol" $context.status $context.responseLength $context.requestId
+      DeploymentId: !Ref apiGatewayDeployment
+      RestApiId: !Ref apiGateway
+  
+  apiGatewayLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+        LogGroupName: !Sub /aws/apigateway/${ApiGatewayName}
+        RetentionInDays: 90
+
+  apiGwAccountConfig:
+    Type: "AWS::ApiGateway::Account"
+    Properties:
+      CloudWatchRoleArn: !GetAtt "apiGatewayLoggingRole.Arn"
+      
+  apiGatewayLoggingRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - "apigateway.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Path: "/"
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+
+  WhatsAppSecret:  
+    Type: AWS::SecretsManager::Secret
+    Properties: 
+      Description: "Authorization key for WhatsApp"
+      Name: "WhatsAppKeyPin"
+      SecretString: !Ref WhatsAppAccessToken
+
+  WhatsAppWebHookLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt WhatsAppWebHooklambdaIAMRole.Arn
+      Runtime: python3.9
+      Environment:
+        Variables:
+          PHONE_NUMBER_ID: !Ref PhoneNumberId
+          SECRET_NAME:  "WhatsAppKeyPin"
+          VERIFY_TOKEN: !Ref VerifyToken
+      ReservedConcurrentExecutions: 1
+      Code:
+        ZipFile: |
+            import os
+            import json
+            import boto3
+            from urllib import request, parse
+            from botocore.exceptions import ClientError
+            phone_number_id = os.environ['PHONE_NUMBER_ID']
+            secret_name = os.environ['SECRET_NAME']
+            verify_token = os.environ['VERIFY_TOKEN']
+            def handler(event,context):
+              print(event)
+              if event['httpMethod'] == "GET":
+                # GET method expects the HubChallenge and validates the Verify Token received with the one in the System Variable. If they match, it returns the HubChallenge
+                HubVerifyToken = event['queryStringParameters']['hub.verify_token']
+                if HubVerifyToken == verify_token:
+                  HubChallenge = event['queryStringParameters']['hub.challenge']
+                  response = {
+                      "statusCode": 200,
+                      "body": HubChallenge
+                  }
+                else:
+                  response = {
+                      "statusCode": 400,
+                      "Message": "Unauthorized access"
+                  }
+              elif event['httpMethod'] == "POST":
+                # POST method expects the message(s)
+                body = json.loads(event['body'])
+                entries = body['entry']
+                for entry in entries:
+                  changes = entry['changes']
+                  for change in changes:
+                    print(change)
+                    try:
+                      messages = change['value']['messages']
+                    except:
+                      try:
+                        business_initiated = change['value']['statuses'][0]['conversation']['origin']['type']
+                        print("Message type: " + business_initiated)
+                      except:
+                        print("Not a recognised message!")
+                    else:
+                      for message in messages:
+                        # Looping through messages and extracting the message body, from number and timestamp
+                        messag_body = message['text']['body']
+                        from_number = message['from']
+                        timestamp = message['timestamp']
+                        message_id = message['id']
+                        print("Message received at: " + timestamp)
+                        print("From: " + from_number)
+                        print("Message: " + messag_body)
+                        # Do something with the inbound message
+                        # Mark message as read
+                        message_read(message_id)
+                      
+                response = {
+                  "statusCode": 200,
+                  "Message": "Message accepted"
+                }
+              else:
+                response = {
+                  "statusCode": 403,
+                  "Message": "Request not recognised"
+                }        
+              return response
+            def message_read(message_id):
+              session = boto3.session.Session()
+              client = session.client(service_name='secretsmanager')
+              try:
+                get_secret_value_response = client.get_secret_value(SecretId=secret_name)
+              except ClientError as e:
+                raise e
+              else:
+                secret = get_secret_value_response['SecretString']
+                url = 'https://graph.facebook.com/v15.0/'+ phone_number_id + '/messages'
+                headers = {
+                    'content-type': 'application/json',
+                    'Authorization': secret
+                }
+                data = parse.urlencode({
+                    'messaging_product': 'whatsapp',
+                    'status': 'read',
+                    'message_id': message_id,
+                }).encode()
+                req =  request.Request(url, data=data, headers=headers)
+                resp = request.urlopen(req)
+              return(resp)
+
+
+  lambdaApiGatewayInvoke:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt WhatsAppWebHookLambda.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${apiGateway}/call/ANY/
+
+  WhatsAppWebHooklambdaIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+      Policies:
+        -
+          PolicyName: "root"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                    - "secretsmanager:GetSecretValue"
+                Resource: !Ref WhatsAppSecret
+              -
+                Effect: "Allow"
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+
+  WhatsAppSendMessageLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt WhatsAppSendMessageLambdaIAMRole.Arn
+      Runtime: python3.9
+      Environment:
+        Variables:
+          PHONE_NUMBER_ID: !Ref PhoneNumberId
+          SECRET_NAME:  "WhatsAppKeyPin"
+      ReservedConcurrentExecutions: 1
+      Code:
+        ZipFile: |
+            import os
+            import json
+            import boto3
+            from urllib import request, parse
+            from botocore.exceptions import ClientError
+            phone_number_id = os.environ['PHONE_NUMBER_ID']
+            secret_name = os.environ['SECRET_NAME']
+            def handler(event, context):
+                print("Received event: {}".format(event))
+                session = boto3.session.Session()
+                client = session.client(service_name='secretsmanager')
+                try:
+                    get_secret_value_response = client.get_secret_value(SecretId=secret_name)
+                except ClientError as e:
+                    raise e
+                else:
+                    secret = get_secret_value_response['SecretString']
+                    url = 'https://graph.facebook.com/v15.0/'+ phone_number_id + '/messages'
+                    message_template = event['Data']
+                    for key in event['Endpoints'].keys(): 
+                        to_number = str(event['Endpoints'][key]['Address'])
+                        send_message(secret, to_number, url, message_template)
+            def send_message(secret, to_number, url, message_template):
+                headers = {
+                    'content-type': 'application/json',
+                    'Authorization': secret
+                }
+                data = parse.urlencode({
+                    'messaging_product': 'whatsapp',
+                    'to': to_number,
+                    'type': 'template',
+                    'template': {
+                        'name': message_template,
+                        'language': {
+                            'code': 'en_US'
+                        }
+                    }
+                }).encode()
+                req =  request.Request(url, data=data, headers=headers)
+                resp = request.urlopen(req)
+
+  lambdaPinpointInvoke:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt WhatsAppSendMessageLambda.Arn
+      Principal: pinpoint.amazonaws.com
+      SourceArn: !Sub arn:aws:mobiletargeting:${AWS::Region}:${AWS::AccountId}:apps/${PinpointProjectId}*
+
+  WhatsAppSendMessageLambdaIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+      Policies:
+        -
+          PolicyName: "root"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                    - "secretsmanager:GetSecretValue"
+                Resource: !Ref WhatsAppSecret
+              -
+                Effect: "Allow"
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+
+Outputs:
+  apiGatewayInvokeURL:
+    Value: !Sub https://${apiGateway}.execute-api.${AWS::Region}.amazonaws.com/call
+
