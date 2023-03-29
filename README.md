@@ -21,17 +21,17 @@ For inbound messages WhatsApp requires a Callback URL. This solution utilizes Am
 3. If the API call method is GET, the AWS Lambda checks if the verify token matches the one stored as an AWS Lambda Environment Variable. If it's TRUE, it returns a code called **HubChallenge** that WhatsApp is expecting in order to verify the connection. For POST API calls, the AWS Lambda loops through the customer messages and retrieves the customer number, timestamp, message_id and message_body. For each message processed, the AWS Lambda function performs an API call to WhatsApp to mark the message as read.
 
 ### Considerations
-1) [AWS account](https://aws.amazon.com/premiumsupport/knowledge-center/create-and-activate-aws-account/).
-2) Amazon Pinpoint project – [How to create an Amazon Pinpoint project](https://catalog.workshops.aws/amazon-pinpoint-customer-experience/en-US/prerequisites/create-a-project).
-3) An Amazon Pinpoint CUSTOM endpoint with address a mobile number which is associated to a WhatsApp account. See example CUSTOM endpoint in a CSV [here]().
-4) A Meta (Facebook) developer account, for more details please go to the [Meta for Developers console](https://developers.facebook.com/).
-
+1. Message delivery/engagement events aren't being recorded.
+2. Messages sent aren't personalized and they are currently using message templates hosted by WhatsApp.
+3. It is recommended to use endpoint type **CUSTOM** and not **SMS** for the following reasons:
+    1. WhatsApp's phone number format doesn't contain + comparing to Pinpoint **SMS** address format. If you decide to use the endpoint type **SMS** you will need to process the endpoint Address by removing the **+**.
+    2. Using the endpoint type **SMS** forces you to send WhatsApp messages with the same throughput (messages per second) as your Pinpoint **SMS** channel.
 
 ### Prerequisites
-1) [AWS account](https://aws.amazon.com/premiumsupport/knowledge-center/create-and-activate-aws-account/).
-2) An Amazon Pinpoint project – [How to create an Amazon Pinpoint project](https://catalog.workshops.aws/amazon-pinpoint-customer-experience/en-US/prerequisites/create-a-project).
-3) An Amazon Pinpoint **CUSTOM** endpoint with address a mobile number which is associated to a WhatsApp account. See example CUSTOM endpoint in a CSV [here](https://github.com/aws-samples/amazon-pinpoint-whatsapp/blob/main/Assets/segment-import%20-CUSTOM.csv).
-4) [Set up developer assets and platform access](https://developers.facebook.com/docs/whatsapp/cloud-api/get-started#set-up-developer-assets).
+1. [AWS account](https://aws.amazon.com/premiumsupport/knowledge-center/create-and-activate-aws-account/).
+2. An Amazon Pinpoint project – [How to create an Amazon Pinpoint project](https://catalog.workshops.aws/amazon-pinpoint-customer-experience/en-US/prerequisites/create-a-project).
+3. An Amazon Pinpoint **CUSTOM** endpoint with address a mobile number which is associated to a WhatsApp account. See example CUSTOM endpoint in a CSV [here](https://github.com/aws-samples/amazon-pinpoint-whatsapp/blob/main/Assets/segment-import%20-CUSTOM.csv).
+4. [Set up developer assets and platform access](https://developers.facebook.com/docs/whatsapp/cloud-api/get-started#set-up-developer-assets).
 
 ### Implementation
 1. Navigate and login into the [Meta for Developers](https://developers.facebook.com/) console, click **My Apps** and select **Create App** (or use an existing app of type Business).
