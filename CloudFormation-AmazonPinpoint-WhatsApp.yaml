@@ -103,7 +103,7 @@ Resources:
     Properties:
       Handler: index.handler
       Role: !GetAtt WhatsAppWebHooklambdaIAMRole.Arn
-      Runtime: python3.9
+      Runtime: python3.11
       Environment:
         Variables:
           PHONE_NUMBER_ID: !Ref PhoneNumberId
@@ -244,7 +244,7 @@ Resources:
     Properties:
       Handler: index.handler
       Role: !GetAtt WhatsAppSendMessageLambdaIAMRole.Arn
-      Runtime: python3.9
+      Runtime: python3.11
       Environment:
         Variables:
           PHONE_NUMBER_ID: !Ref PhoneNumberId
